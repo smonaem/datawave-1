@@ -3,7 +3,9 @@ package datawave.ingest.mapreduce.job;
 import datawave.ingest.data.config.ConfigurationHelper;
 import datawave.ingest.data.config.ingest.AccumuloHelper;
 import datawave.ingest.mapreduce.handler.shard.ShardedDataTypeHandler;
+import datawave.ingest.mapreduce.handler.shard.ShardIdFactory;
 import datawave.util.StringUtils;
+import datawave.util.time.DateHelper;
 import org.apache.accumulo.core.client.*;
 import org.apache.accumulo.core.client.impl.ClientContext;
 import org.apache.accumulo.core.conf.AccumuloConfiguration;
@@ -55,15 +57,29 @@ public class ShardedTableMapFile {
         TreeMap<Text,String> locations = new TreeMap<>();
         
         SequenceFile.Reader reader = ShardedTableMapFile.getReader(conf, tableName);
-        
+        ShardIdFactory shardIdFactory = new ShardIdFactory(conf);
+        int expectedShardsToday = shardIdFactory.getNumShards(Long.MAX_VALUE);
+        boolean hasEnoughShardsToday = false;
+
         Text shardID = new Text();
         Text location = new Text();
+        String shardDate;
+
         try {
             while (reader.next(shardID, location)) {
                 locations.put(new Text(shardID), location.toString());
+                shardDate = ShardIdFactory.getDateString(shardID.toString());
+                if(DateHelper.format(System.currentTimeMillis()) == shardDate)
+                    hasEnoughShardsToday = ShardIdFactory.getShard(shardID.toString()) == expectedShardsToday;
             }
         } finally {
             reader.close();
+            if(!hasEnoughShardsToday)
+                try {
+                    throw new RuntimeException("All of today's shards have not been created.  Run bin/ingest/create_shards_since.sh yyyymmdd, substitute yyyymmdd with today's date.  Ensure that the normal mechanism for creating shards is running - e.g, crontab");
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
         }
         return locations;
     }
